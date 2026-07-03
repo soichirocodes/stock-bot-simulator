@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StockBot — ペーパートレード シミュレーター</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06080f;
+    --panel: rgba(255,255,255,.028);
+    --panel-hover: rgba(255,255,255,.05);
+    --border: rgba(255,255,255,.08);
+    --border-strong: rgba(255,255,255,.14);
+    --text: #eef2ff;
+    --muted: #7c87a5;
+    --green: #34d399;
+    --red: #fb7185;
+    --accent-1: #6366f1;
+    --accent-2: #22d3ee;
+    --glow: rgba(99,102,241,.35);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scrollbar-color: #2a3550 transparent; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", "Noto Sans JP", sans-serif;
+    min-height: 100vh;
+    padding: 28px clamp(16px, 4vw, 48px) 48px;
+    position: relative;
+    overflow-x: hidden;
+  }
+  /* ambient glow blobs (radial gradients: same look as blur, far cheaper to paint) */
+  body::before, body::after {
+    content: ""; position: fixed; z-index: -1; pointer-events: none;
+  }
+  body::before {
+    width: 900px; height: 900px; top: -380px; left: -280px;
+    background: radial-gradient(circle, rgba(99,102,241,.14) 0%, rgba(99,102,241,.05) 45%, transparent 70%);
+  }
+  body::after {
+    width: 800px; height: 800px; bottom: -360px; right: -260px;
+    background: radial-gradient(circle, rgba(34,211,238,.09) 0%, rgba(34,211,238,.03) 45%, transparent 70%);
+  }
+
+  .num { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+
+  /* ── header ─────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin-bottom: 26px;
+  }
+  .logo {
+    width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+    display: grid; place-items: center; font-size: 21px;
+    box-shadow: 0 0 24px var(--glow);
+  }
+  h1 { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+  h1 .thin { font-weight: 500; color: var(--muted); }
+  .sub { flex-basis: 100%; color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+    box-shadow: 0 0 8px var(--green); animation: pulse 2.4s infinite;
+  }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ── KPI cards ──────────────────────── */
+  .grid { display: grid; gap: 16px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px 20px;
+    backdrop-filter: blur(12px);
+    position: relative; overflow: hidden;
+    transition: transform .2s ease, border-color .2s ease, background .2s ease;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--border-strong); background: var(--panel-hover); }
+  .card::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent-1), var(--accent-2), transparent);
+    opacity: 0; transition: opacity .25s;
+  }
+  .card:hover::before { opacity: 1; }
+  .card .label { color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .card .value { font-size: 25px; font-weight: 700; letter-spacing: -.02em; }
+  .card.hero { background: linear-gradient(135deg, rgba(99,102,241,.16), rgba(34,211,238,.07)); border-color: rgba(99,102,241,.35); }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+
+  /* ── toolbar ────────────────────────── */
+  .toolbar { display: flex; gap: 12px; align-items: center; margin: 22px 0; flex-wrap: wrap; }
+  button {
+    font-family: inherit; border: none; cursor: pointer;
+    border-radius: 12px; padding: 12px 22px;
+    font-size: 14px; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg, var(--accent-1), #8b5cf6);
+    box-shadow: 0 4px 20px var(--glow);
+    transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+  }
+  button:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: 0 6px 28px var(--glow); }
+  button:active { transform: translateY(0) scale(.98); }
+  button:disabled { opacity: .55; cursor: wait; animation: pulse 1.4s infinite; }
+  button.ghost {
+    background: transparent; border: 1px solid var(--border-strong);
+    color: var(--muted); font-weight: 500; box-shadow: none; padding: 9px 16px; font-size: 12.5px;
+  }
+  button.ghost:hover { color: var(--text); border-color: rgba(251,113,133,.5); }
+  .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 13px; color: var(--muted); user-select: none; }
+  .switch input { display: none; }
+  .switch .track {
+    width: 38px; height: 21px; border-radius: 11px; background: rgba(255,255,255,.1);
+    border: 1px solid var(--border-strong); position: relative; transition: background .2s;
+  }
+  .switch .track::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+    border-radius: 50%; background: #aab3cc; transition: transform .2s, background .2s;
+  }
+  .switch input:checked + .track { background: linear-gradient(135deg, var(--accent-1), var(--accent-2)); border-color: transparent; }
+  .switch input:checked + .track::after { transform: translateX(17px); background: #fff; }
+  .status { color: var(--muted); font-size: 12.5px; }
+
+  /* ── panels ─────────────────────────── */
+  .row2 { grid-template-columns: 5fr 3fr; margin-top: 4px; align-items: start; }
+  @media (max-width: 980px) { .row2 { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px; backdrop-filter: blur(12px);
+  }
+  .panel h2 {
+    font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    margin-bottom: 14px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel h2::before { content: ""; width: 3px; height: 14px; border-radius: 2px; background: linear-gradient(180deg, var(--accent-1), var(--accent-2)); }
+
+  /* ── tables ─────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; color: var(--muted); font-weight: 600; font-size: 11px;
+    letter-spacing: .07em; text-transform: uppercase;
+    padding: 8px 10px; border-bottom: 1px solid var(--border-strong);
+    position: sticky; top: 0; background: #0b0e18; z-index: 1;
+  }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  tbody tr { transition: background .15s; }
+  tbody tr:hover { background: rgba(255,255,255,.03); }
+  tr:last-child td { border-bottom: none; }
+  .sym { font-weight: 700; letter-spacing: .02em; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  }
+  .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .badge.BUY  { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
+  .badge.SELL { background: rgba(251,113,133,.12); color: var(--red); border: 1px solid rgba(251,113,133,.3); }
+  .badge.HOLD, .badge.SKIP { background: rgba(124,135,165,.1); color: var(--muted); border: 1px solid rgba(124,135,165,.25); }
+
+  /* ── watchlist chips ────────────────── */
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--border-strong);
+    border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 600;
+    margin: 3px; cursor: pointer; transition: all .18s ease;
+  }
+  .chip:hover { border-color: var(--accent-2); box-shadow: 0 0 14px rgba(34,211,238,.2); transform: translateY(-1px); }
+  .chip.active { background: linear-gradient(135deg, rgba(99,102,241,.3), rgba(34,211,238,.18)); border-color: var(--accent-1); }
+  .chip .x { color: var(--muted); font-size: 11px; padding: 0 2px; }
+  .chip .x:hover { color: var(--red); }
+
+  input[type=text] {
+    background: rgba(255,255,255,.04); border: 1px solid var(--border-strong); color: var(--text);
+    border-radius: 10px; padding: 9px 13px; font-size: 13px; width: 120px;
+    font-family: inherit; outline: none; transition: border-color .2s, box-shadow .2s;
+  }
+  input[type=text]:focus { border-color: var(--accent-1); box-shadow: 0 0 0 3px rgba(99,102,241,.18); }
+  select {
+    background: rgba(255,255,255,.04); border: 1px solid var(--border-strong); color: var(--text);
+    border-radius: 10px; padding: 9px 13px; font-size: 13px; font-family: inherit; outline: none; cursor: pointer;
+  }
+  select:focus { border-color: var(--accent-1); }
+  select option { background: #10141f; }
+
+  /* ── backtest stats ─────────────────── */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 14px 0; }
+  .stat {
+    background: rgba(255,255,255,.03); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px;
+  }
+  .stat .k { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 6px; }
+  .stat .v { font-size: 18px; font-weight: 700; }
+  .stat.win { border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.06); }
+  .stat.lose { border-color: rgba(251,113,133,.4); background: rgba(251,113,133,.06); }
+
+  /* ── bot log ────────────────────────── */
+  #botlog { font-size: 12.5px; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  #botlog .entry {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 7px 10px; border-radius: 10px; background: rgba(255,255,255,.025);
+    border: 1px solid var(--border);
+    animation: slideIn .3s ease both;
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(-8px); } }
+  .muted { color: var(--muted); }
+  canvas { max-height: 300px; }
+  .scroll { max-height: 340px; overflow-y: auto; border-radius: 10px; }
+
+  footer { margin-top: 30px; text-align: center; color: var(--muted); font-size: 11.5px; opacity: .7; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">📈</div>
+    <h1>StockBot <span class="thin">/ ペーパートレード シミュレーター</span></h1>
+    <div class="sub">
+      <span class="live-dot"></span> 実データ: Yahoo Finance (yfinance) &nbsp;·&nbsp; 仮想資金のみ — リアルマネーは一切使用しません
+    </div>
+  </header>
+
+  <div class="grid cards">
+    <div class="card hero"><div class="label">💰 総資産 (評価額)</div><div class="value num" id="equity">–</div></div>
+    <div class="card"><div class="label">💵 現金</div><div class="value num" id="cash">–</div></div>
+    <div class="card"><div class="label">📊 損益合計</div><div class="value num" id="pnl">–</div></div>
+    <div class="card"><div class="label">📈 損益率</div><div class="value num" id="pnlPct">–</div></div>
+    <div class="card"><div class="label">✅ 確定損益</div><div class="value num" id="realized">–</div></div>
+  </div>
+
+  <div class="toolbar">
+    <button id="runBot">🤖 Botを実行</button>
+    <label class="switch">
+      <input type="checkbox" id="autoRun">
+      <span class="track"></span>
+      自動実行 (10分ごと)
+    </label>
+    <button class="ghost" id="resetBtn">シミュレーションをリセット</button>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div class="grid row2">
+    <div class="panel">
+      <h2>資産推移</h2>
+      <canvas id="equityChart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>🤖 Bot判断ログ (最新実行)</h2>
+      <div id="botlog"><span class="muted">「Botを実行」を押すと、ウォッチリスト全銘柄のシグナルを判定します。</span></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:16px;">
+    <h2>戦略比較バックテスト <span class="muted" style="text-transform:none;font-weight:400;">— 4戦略を同一条件で検証 (同じ資金管理・翌日始値約定・手数料0.1%)</span></h2>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <select id="btPeriod">
+        <option value="1y">過去1年</option>
+        <option value="2y">過去2年</option>
+        <option value="5y" selected>過去5年</option>
+        <option value="10y">過去10年</option>
+      </select>
+      <button id="runBt">📐 戦略比較を実行</button>
+      <span class="status" id="btStatus"></span>
+    </div>
+    <div id="btResult" style="display:none;">
+      <div class="scroll" style="margin-top:14px;">
+        <table id="btTable">
+          <thead><tr>
+            <th>戦略</th><th>総リターン</th><th>勝率</th><th>PF</th><th>最大DD</th><th>シャープ</th><th>売買回数</th><th>手数料</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <canvas id="btChart" style="max-height:340px; margin-top:14px;"></canvas>
+      <div class="muted" style="font-size:11px;margin-top:10px;" id="btNote"></div>
+    </div>
+  </div>
+
+  <div class="grid row2" style="margin-top:16px;">
+    <div class="panel">
+      <h2>保有ポジション</h2>
+      <div class="scroll">
+      <table id="posTable">
+        <thead><tr><th>銘柄</th><th>数量</th><th>平均取得</th><th>現在値</th><th>評価額</th><th>含み損益</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>ウォッチリスト</h2>
+      <div id="watchChips"></div>
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <input type="text" id="newSymbol" placeholder="例: AMD">
+        <button class="ghost" id="addSymbol" style="border-color: rgba(99,102,241,.5); color: var(--text);">追加</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:10px;">チップをクリックで株価チャート表示 / ✕で削除</div>
+      <canvas id="stockChart" style="margin-top:12px;"></canvas>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:16px;">
+    <h2>売買履歴 <span class="muted" style="text-transform:none;font-weight:400;">— SQLiteに保存</span></h2>
+    <div class="scroll">
+    <table id="tradeTable">
+      <thead><tr><th>日時</th><th>銘柄</th><th>売買</th><th>数量</th><th>価格</th><th>金額</th><th>確定損益</th><th>判断理由</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+  </div>
+
+  <footer>StockBot Simulator — SMA5/20クロス + RSI(14) ルールベース戦略 · データはSQLiteに永続化</footer>
+
+<script>
+// Served via Flask → relative URLs. Opened as a file / raw preview → talk to the local server directly.
+const API_BASE = /^https?:$/.test(location.protocol) ? '' : 'http://127.0.0.1:5001';
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+const sign = (n) => (n > 0 ? '+' : '') + fmt(n);
+
+let equityChart, stockChart, autoTimer = null, activeSymbol = null;
+
+Chart.defaults.font.family = "'Inter', 'Noto Sans JP', sans-serif";
+Chart.defaults.color = '#7c87a5';
+
+async function api(path, opts) {
+  const res = await fetch(API_BASE + path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+async function refreshPortfolio() {
+  const p = await api('/api/portfolio');
+  $('equity').textContent = fmt(p.equity);
+  $('cash').textContent = fmt(p.cash);
+  $('pnl').textContent = sign(p.total_pnl);
+  $('pnl').className = 'value num ' + cls(p.total_pnl);
+  $('pnlPct').textContent = (p.total_pnl_pct > 0 ? '+' : '') + p.total_pnl_pct + '%';
+  $('pnlPct').className = 'value num ' + cls(p.total_pnl_pct);
+  $('realized').textContent = sign(p.realized_pnl);
+  $('realized').className = 'value num ' + cls(p.realized_pnl);
+
+  const tb = $('posTable').querySelector('tbody');
+  tb.innerHTML = p.positions.length ? '' : '<tr><td colspan="6" class="muted">ポジションなし</td></tr>';
+  for (const pos of p.positions) {
+    tb.insertAdjacentHTML('beforeend', `<tr>
+      <td class="sym">${pos.symbol}</td><td class="num">${pos.qty}</td>
+      <td class="num">${fmt(pos.avg_cost)}</td><td class="num">${fmt(pos.price)}</td><td class="num">${fmt(pos.value)}</td>
+      <td class="num ${cls(pos.unrealized_pnl)}">${sign(pos.unrealized_pnl)} (${pos.pnl_pct > 0 ? '+' : ''}${pos.pnl_pct}%)</td>
+    </tr>`);
+  }
+}
+
+async function refreshTrades() {
+  const trades = await api('/api/trades');
+  const tb = $('tradeTable').querySelector('tbody');
+  tb.innerHTML = trades.length ? '' : '<tr><td colspan="8" class="muted">まだ取引がありません</td></tr>';
+  for (const t of trades) {
+    tb.insertAdjacentHTML('beforeend', `<tr>
+      <td class="muted num">${t.ts.replace('T', ' ').slice(0, 19)}</td>
+      <td class="sym">${t.symbol}</td>
+      <td><span class="badge ${t.side}">${t.side}</span></td>
+      <td class="num">${t.qty}</td><td class="num">${fmt(t.price)}</td><td class="num">${fmt(t.amount)}</td>
+      <td class="num ${t.realized_pnl == null ? '' : cls(t.realized_pnl)}">${t.realized_pnl == null ? '–' : sign(t.realized_pnl)}</td>
+      <td class="muted">${t.reason || ''}</td>
+    </tr>`);
+  }
+}
+
+async function refreshEquityChart() {
+  const hist = await api('/api/equity_history');
+  const labels = hist.map(h => h.ts.replace('T', ' ').slice(5, 16));
+  const data = hist.map(h => h.equity);
+  const bench = hist.map(h => h.benchmark);
+  if (equityChart) equityChart.destroy();
+  const ctx = $('equityChart').getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 300);
+  grad.addColorStop(0, 'rgba(99,102,241,.35)');
+  grad.addColorStop(1, 'rgba(34,211,238,0)');
+  const datasets = [{
+    label: '総資産', data,
+    borderColor: '#818cf8', borderWidth: 2.5,
+    backgroundColor: grad, fill: true, tension: .35,
+    pointRadius: 2, pointBackgroundColor: '#22d3ee',
+  }];
+  if (bench.some(v => v != null)) {
+    datasets.push({
+      label: 'SPY (同資金で指数を保有)', data: bench,
+      borderColor: '#7c87a5', borderWidth: 1.5, borderDash: [6, 4],
+      pointRadius: 0, fill: false, tension: .35,
+    });
+  }
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      plugins: { legend: { display: datasets.length > 1, labels: { boxWidth: 10, boxHeight: 2, font: {size: 10.5} } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, font: {size: 10} }, grid: { color: 'rgba(255,255,255,.04)' } },
+        y: { ticks: { font: {size: 10} }, grid: { color: 'rgba(255,255,255,.04)' } },
+      },
+    },
+  });
+}
+
+/* ── strategy comparison backtest ─────── */
+let btChart;
+const STRAT_COLORS = {
+  sma_rsi: '#818cf8',
+  momentum: '#34d399',
+  donchian: '#fbbf24',
+  buy_hold: '#f472b6',
+};
+
+async function runCompare() {
+  const btn = $('runBt');
+  btn.disabled = true;
+  btn.textContent = '⏳ 検証中…';
+  $('btStatus').textContent = '過去データを取得して4戦略を検証しています (初回は30秒前後かかります)';
+  try {
+    const period = $('btPeriod').value;
+    const r = await api('/api/backtest/compare', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({period}) });
+
+    const best = Math.max(...r.strategies.map(s => s.summary.total_return_pct), r.spy_return_pct);
+    const pct = (v) => (v > 0 ? '+' : '') + v + '%';
+    const tb = $('btTable').querySelector('tbody');
+    tb.innerHTML = '';
+    for (const s of r.strategies) {
+      const m = s.summary;
+      const isBest = m.total_return_pct === best;
+      tb.insertAdjacentHTML('beforeend', `<tr>
+        <td><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${STRAT_COLORS[s.name]};margin-right:8px;"></span><b>${s.label}</b>${isBest ? ' 🏆' : ''}</td>
+        <td class="num ${cls(m.total_return_pct)}">${pct(m.total_return_pct)}</td>
+        <td class="num">${m.win_rate_pct != null ? m.win_rate_pct + '%' : '–'}</td>
+        <td class="num">${m.profit_factor != null ? m.profit_factor : '–'}</td>
+        <td class="num neg">${m.max_drawdown_pct}%</td>
+        <td class="num">${m.sharpe}</td>
+        <td class="num">${m.num_buys}買/${m.num_sells}売</td>
+        <td class="num muted">${fmt(m.total_commission)}</td>
+      </tr>`);
+    }
+    tb.insertAdjacentHTML('beforeend', `<tr>
+      <td><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#7c87a5;margin-right:8px;"></span><b>SPY (指数を買って持つだけ)</b>${r.spy_return_pct === best ? ' 🏆' : ''}</td>
+      <td class="num ${cls(r.spy_return_pct)}">${pct(r.spy_return_pct)}</td>
+      <td class="num muted" colspan="6">ベンチマーク</td>
+    </tr>`);
+
+    if (btChart) btChart.destroy();
+    const datasets = r.strategies.map(s => ({
+      label: s.label, data: s.equity,
+      borderColor: STRAT_COLORS[s.name], borderWidth: 2,
+      pointRadius: 0, fill: false, tension: .2,
+    }));
+    datasets.push({
+      label: 'SPY', data: r.spy_curve,
+      borderColor: '#7c87a5', borderWidth: 1.5, borderDash: [6, 4],
+      pointRadius: 0, fill: false, tension: .2,
+    });
+    btChart = new Chart($('btChart'), {
+      type: 'line',
+      data: { labels: r.dates, datasets },
+      options: {
+        plugins: { legend: { labels: { boxWidth: 10, boxHeight: 2, font: {size: 10.5} } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, font: {size: 10} }, grid: { display: false } },
+          y: { ticks: { font: {size: 10} }, grid: { color: 'rgba(255,255,255,.04)' } },
+        },
+        interaction: { mode: 'index', intersect: false },
+      },
+    });
+
+    $('btNote').textContent =
+      `${r.start} 〜 ${r.end} · 対象: ${r.symbols.join(', ')}` +
+      (r.skipped.length ? ` (データ取得不可: ${r.skipped.join(', ')})` : '') +
+      ` · 全戦略とも同一の資金管理 (1銘柄20%上限・現金2%確保) · 判定は当日終値・約定は翌日始値 · 手数料 ${r.commission_rate_pct}%/回` +
+      ' · モメンタムは12ヶ月データが揃うまで取引しないため、序盤は現金のままになります';
+
+    $('btResult').style.display = 'block';
+    $('btStatus').textContent = '';
+  } catch (e) {
+    $('btStatus').textContent = 'エラー: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📐 戦略比較を実行';
+  }
+}
+$('runBt').onclick = runCompare;
+
+async function refreshWatchlist() {
+  const w = await api('/api/watchlist');
+  renderWatchlist(w.watchlist);
+}
+
+function renderWatchlist(list) {
+  const el = $('watchChips');
+  el.innerHTML = '';
+  for (const s of list) {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (s === activeSymbol ? ' active' : '');
+    chip.innerHTML = `<b>${s}</b><span class="x" title="削除">✕</span>`;
+    chip.querySelector('b').onclick = () => { activeSymbol = s; renderWatchlist(list); showStockChart(s); };
+    chip.querySelector('.x').onclick = async (e) => {
+      e.stopPropagation();
+      await api('/api/watchlist', { method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({symbol: s}) });
+      refreshWatchlist();
+    };
+    el.appendChild(chip);
+  }
+}
+
+async function showStockChart(symbol) {
+  try {
+    const d = await api('/api/chart/' + symbol);
+    if (stockChart) stockChart.destroy();
+    stockChart = new Chart($('stockChart'), {
+      type: 'line',
+      data: { labels: d.dates, datasets: [
+        { label: symbol, data: d.close, borderColor: '#eef2ff', pointRadius: 0, borderWidth: 2 },
+        { label: 'SMA5', data: d.sma_fast, borderColor: '#34d399', pointRadius: 0, borderWidth: 1.2 },
+        { label: 'SMA20', data: d.sma_slow, borderColor: '#fbbf24', pointRadius: 0, borderWidth: 1.2 },
+      ]},
+      options: {
+        plugins: { legend: { labels: { boxWidth: 10, boxHeight: 2, font: {size: 10.5} } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 6, font: {size: 10} }, grid: { display: false } },
+          y: { ticks: { font: {size: 10} }, grid: { color: 'rgba(255,255,255,.04)' } },
+        },
+      },
+    });
+  } catch (e) { $('status').textContent = 'チャート取得失敗: ' + e.message; }
+}
+
+async function runBot() {
+  const btn = $('runBot');
+  btn.disabled = true;
+  btn.textContent = '⏳ 判定中…';
+  $('status').textContent = '株価取得と判定に数十秒かかる場合があります';
+  try {
+    const report = await api('/api/bot/run', { method: 'POST' });
+    const log = $('botlog');
+    log.innerHTML = '';
+    report.results.forEach((r, i) => {
+      const div = document.createElement('div');
+      div.className = 'entry';
+      div.style.animationDelay = (i * 60) + 'ms';
+      div.innerHTML = `
+        <span class="badge ${r.action.replace(/\(.*/, '')}">${r.action}</span>
+        <b class="sym">${r.symbol}</b>
+        <span class="num">${r.price ? fmt(r.price) : ''}</span>
+        <span class="muted">${r.reason}</span>`;
+      log.appendChild(div);
+    });
+    $('status').textContent = '実行完了: ' + new Date().toLocaleTimeString('ja-JP');
+    await Promise.all([refreshPortfolio(), refreshTrades(), refreshEquityChart()]);
+  } catch (e) {
+    $('status').textContent = 'エラー: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🤖 Botを実行';
+  }
+}
+
+$('runBot').onclick = runBot;
+$('autoRun').onchange = (e) => {
+  if (e.target.checked) { autoTimer = setInterval(runBot, 10 * 60 * 1000); $('status').textContent = '自動実行ON (10分ごと)'; }
+  else { clearInterval(autoTimer); autoTimer = null; $('status').textContent = '自動実行OFF'; }
+};
+$('addSymbol').onclick = async () => {
+  const s = $('newSymbol').value.trim();
+  if (!s) return;
+  try {
+    const w = await api('/api/watchlist', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({symbol: s}) });
+    renderWatchlist(w.watchlist);
+    $('newSymbol').value = '';
+  } catch (e) { $('status').textContent = e.message; }
+};
+$('newSymbol').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('addSymbol').click(); });
+$('resetBtn').onclick = async () => {
+  if (!confirm('売買履歴・ポジション・資産推移をすべてリセットします。よろしいですか？')) return;
+  await api('/api/reset', { method: 'POST' });
+  $('botlog').innerHTML = '<span class="muted">リセットしました。</span>';
+  await Promise.all([refreshPortfolio(), refreshTrades(), refreshEquityChart()]);
+};
+
+(async () => {
+  await Promise.all([refreshPortfolio(), refreshTrades(), refreshEquityChart(), refreshWatchlist()]);
+})();
+</script>
+</body>
+</html>
